@@ -4,6 +4,10 @@ Command line interface to manipulating keepass files
 '''
 import sys
 
+def main():
+    cliobj = Cli(sys.argv[1:])
+    cliobj()
+
 class Cli(object):
     '''
     Process command line
@@ -85,8 +89,8 @@ class Cli(object):
         
         Example: open, dump to screen and save
 
-        keepassc open -m "My Secret" input.kpdb \
-                 dump -f '"%(title)s" "%(username)s" %(url)s' \
+        keepassc open -m "My Secret" input.kpdb 
+                 dump -f '"%(title)s" "%(username)s" %(url)s'
                  save -m "New Secret" output.kpdb
 
         execute "help" command for more information.

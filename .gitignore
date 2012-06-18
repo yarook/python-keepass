@@ -1,2 +1,6 @@
 *~
 *.pyc
+build/
+dist/
+env/
+keepass.egg-info/
