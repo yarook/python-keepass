@@ -47,13 +47,13 @@ class DBHDR(object):
         ('signature2',4,'I'),
         ('flags',4,'I'),
         ('version',4,'I'),
-        ('master_seed',16,'16s'),
+        ('final_master_seed',16,'16s'),
         ('encryption_iv',16,'16s'),
-        ('ngroups',4,'I'),
+        ('ngroups',4,'I'), 
         ('nentries',4,'I'),
         ('contents_hash',32,'32s'),
-        ('master_seed2',32,'32s'),
-        ('key_enc_rounds',4,'I'),
+        ('transform_seed',32,'32s'),
+        ('transform_rounds',4,'I'),
         ]
     
     signatures = (0x9AA2D903,0xB54BFB65)

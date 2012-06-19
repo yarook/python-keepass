@@ -4,3 +4,5 @@ build/
 dist/
 env/
 keepass.egg-info/
+src/
+test.py

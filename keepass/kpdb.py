@@ -12,10 +12,11 @@ General structure:
 
 '''
 
-import sys, struct
+import sys, struct, hashlib
 
 from header import DBHDR
 from infoblock import GroupInfo, EntryInfo
+from Crypto.Cipher import AES
 
 
 class Database(object):
@@ -23,8 +24,11 @@ class Database(object):
     Access a KeePass DB file of format v3
     '''
     
-    def __init__(self, filename = None, masterkey=""):
+    def __init__(self, filename = None, masterkey=None, filekey=None, passphrase=None):
         self.masterkey = masterkey
+        self.filekey = filekey
+        self.passphrase = passphrase
+
         if filename:
             self.read(filename)
             return
@@ -46,10 +50,16 @@ class Database(object):
 
         payload = buf[124:]
 
-        self.finalkey = self.final_key(self.masterkey,
-                                       self.header.master_seed,
-                                       self.header.master_seed2,
-                                       self.header.key_enc_rounds)
+#        if self.masterkey:
+#            key = self.masterkey
+#        elif self.filekey or self.password:
+#            key = self.composite_key()
+
+#        self.finalkey = self.final_key(key,
+#                                       self.header.final_master_seed,
+#                                       self.header.transform_seed,
+#                                       self.header.transform_rounds)
+        self.finalkey = self.final_key()
         payload = self.decrypt_payload(payload, self.finalkey, 
                                        self.header.encryption_type(),
                                        self.header.encryption_iv)
@@ -73,22 +83,55 @@ class Database(object):
             continue
         return
 
-    def final_key(self,masterkey,masterseed,masterseed2,rounds):
+    def get(self, title=None):
+        for e in self.entries:
+            if e.title == title:
+                return e
+
+    def transform(self, key, seed, rounds):
+        cipher = AES.new(seed,  AES.MODE_ECB)
+        total = 0
+        for i in range(0, rounds):
+            total += 1
+            key = cipher.encrypt(key)
+        return key
+
+    def composite_key(self):
+        if self.filekey and not self.passphrase:
+            return self.filekey
+
+        if self.passphrase and not self.filekey:
+            return hashlib.sha256(self.passphrase).digest()
+
+        composite = hashlib.sha256()
+        composite.update(hashlib.sha256(self.passphrase).digest())
+        composite.update(self.filekey)
+        return composite.digest()
+
+    def final_key(self):
+        composite_key = self.composite_key()
+        tmaster = self.transform(composite_key, self.header.transform_seed, self.header.transform_rounds)
+        tdigest = hashlib.sha256(tmaster).digest()
+        return hashlib.sha256(self.header.final_master_seed + tdigest).digest()
+
+
+    def old_final_key(self,masterkey,final_master_seed,transform_seed, rounds):
         '''Munge masterkey into the final key for decryping payload by
         encrypting it for the given number of rounds masterseed2 and
         hashing it with masterseed.'''
         from Crypto.Cipher import AES
         import hashlib
 
-        key = hashlib.sha256(masterkey).digest()
-        cipher = AES.new(masterseed2,  AES.MODE_ECB)
+        #key = hashlib.sha256(masterkey).digest()
+        key = masterkey
+        cipher = AES.new(transform_seed,  AES.MODE_ECB)
         
         while rounds:
             rounds -= 1
             key = cipher.encrypt(key)
             continue
         key = hashlib.sha256(key).digest()
-        return hashlib.sha256(masterseed + key).digest()
+        return hashlib.sha256(final_master_seed + key).digest()
 
     def decrypt_payload(self, payload, finalkey, enctype, iv):
         'Decrypt payload (non-header) part of the buffer'
@@ -103,6 +146,9 @@ class Database(object):
             raise ValueError, "Decryption failed.\nThe key is wrong or the file is damaged"
 
         import hashlib
+        #print payload
+        print repr(hashlib.sha256(payload).hexdigest())
+        print repr(self.header.contents_hash.encode('hex'))
         if self.header.contents_hash != hashlib.sha256(payload).digest():
             raise ValueError, "Decryption failed. The file checksum did not match."
 
@@ -139,7 +185,7 @@ class Database(object):
         return cipher.encrypt(payload)
         
     def __str__(self):
-        ret = [str(self.header)]
+        ret = [str(repr(self.header))]
         ret += map(str,self.groups)
         ret += map(str,self.entries)
         return '\n'.join(ret)
