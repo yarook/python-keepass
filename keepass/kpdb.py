@@ -29,6 +29,7 @@ class Database(object):
         self.filekey = filekey
         self.passphrase = passphrase
 
+        self.filename = filename
         if filename:
             self.read(filename)
             return
@@ -147,8 +148,8 @@ class Database(object):
 
         import hashlib
         #print payload
-        print repr(hashlib.sha256(payload).hexdigest())
-        print repr(self.header.contents_hash.encode('hex'))
+        #print repr(hashlib.sha256(payload).hexdigest())
+        #print repr(self.header.contents_hash.encode('hex'))
         if self.header.contents_hash != hashlib.sha256(payload).digest():
             raise ValueError, "Decryption failed. The file checksum did not match."
 
@@ -199,13 +200,14 @@ class Database(object):
             payload += entry.encode()
         return payload
 
-    def write(self,filename,masterkey=""):
+    def write(self, filename=None):
         '''' 
         Write out DB to given filename with optional master key.
         If no master key is given, the one used to create this DB is used.
         '''
         import hashlib
 
+        outfilename = filename or self.filename
         self.header.ngroups = len(self.groups)
         self.header.nentries = len(self.entries)
 
@@ -217,16 +219,16 @@ class Database(object):
         payload = self.encode_payload()
         header.contents_hash = hashlib.sha256(payload).digest()
 
-        finalkey = self.final_key(masterkey = masterkey or self.masterkey,
-                                  masterseed = self.header.master_seed,
-                                  masterseed2 = self.header.master_seed2,
-                                  rounds = self.header.key_enc_rounds)
+#        finalkey = self.final_key(masterkey = masterkey or self.masterkey,
+#                                  masterseed = self.header.master_seed,
+#                                  masterseed2 = self.header.master_seed2,
+#                                  rounds = self.header.key_enc_rounds)
 
-        payload = self.encrypt_payload(payload, finalkey, 
+        payload = self.encrypt_payload(payload, self.final_key(), 
                                        header.encryption_type(),
                                        header.encryption_iv)
 
-        fp = open(filename,'w')
+        fp = open(outfilename,'w')
         fp.write(header.encode())
         fp.write(payload)
         fp.close()

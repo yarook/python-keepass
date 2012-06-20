@@ -4,7 +4,9 @@
 Classes and functions for the GroupInfo and EntryInfo blocks of a keepass file
 '''
 
-import struct
+import struct, uuid
+from collections import OrderedDict
+from datetime import datetime
 
 # return tupleof (decode,encode) functions
 
@@ -57,7 +59,11 @@ class InfoBase(object):
     def __init__(self,format,string=None):
         self.format = format
         self.order = []         # keep field order
-        if string: self.decode(string)
+        if string:
+            self.decode(string)
+        else:
+            string = self.encode(set_default=True)
+            self.decode(string)
         return
 
     def __str__(self):
@@ -81,9 +87,10 @@ class InfoBase(object):
 
             substr = string[index:index+siz]
             index += siz
+            name,decenc,default = self.format[typ]
+            #print typ, siz, name
             buf = struct.unpack('<%ds'%siz,substr)[0]
 
-            name,decenc = self.format[typ]
             if name is None: break
             try:
                 value = decenc[0](buf)
@@ -91,6 +98,8 @@ class InfoBase(object):
                 msg = '%s, typ = %d[%d] -> %s buf = "%s"'%\
                     (msg,typ,siz,self.format[typ],buf)
                 raise struct.error,msg
+
+            #print value
 
             #print '%s: type = %d[%d] -> %s buf = "%s" value = %s'%\
             #    (name,typ,siz,self.format[typ],buf,str(value))
@@ -104,7 +113,43 @@ class InfoBase(object):
             length += 2+4+siz
         return length
 
-    def encode(self):
+    def encode(self, set_default=False):
+        string = ""
+        for typ, item in self.format.items():
+            name = item[0]
+            decenc = item[1]
+            default = item[2]
+            if typ == 0xFFFF:   # end of block
+                encoded = None
+            else:
+                if hasattr(self, name):
+                    value = self.__dict__[name]
+                else:
+                    if default is None:
+                        value = None
+                    else:
+                        value = default()
+                encoded = decenc[1](value)
+            if encoded is None:
+                siz = 0
+            else:
+                siz = len(encoded)
+            #print typ, siz, repr(encoded)
+            if siz > 200000:
+                #print siz
+                raise Exception("Size too big")
+            buf = struct.pack('<H I',typ, siz)
+            typ,siz = struct.unpack('<H I',buf)
+            #print typ, siz
+            #buf += struct.pack('<I',siz)
+            if encoded is not None:
+                buf += struct.pack('<%ds'%siz,encoded)
+            string += buf
+            continue
+        #print
+        return string
+
+    def old_encode(self):
         'Return binary string representatoin'
         string = ""
         for typ,siz in self.order:
@@ -152,19 +197,19 @@ Notes:
   * FFFF: Group entry terminator, FIELDSIZE must be 0
   '''
 
-    format = {
-        0x0: ('ignored',null_de()),
-        0x1: ('groupid',int_de()),
-        0x2: ('group_name',string_de()),
-        0x3: ('creation_time',date_de()),
-        0x4: ('lastmod_time',date_de()),
-        0x5: ('lastacc_time',date_de()),
-        0x6: ('expire_time',date_de()),
-        0x7: ('imageid',int_de()),
-        0x8: ('level',short_de()),
-        0x9: ('flags',int_de()),
-        0xFFFF: (None,None),
-        }
+    format = OrderedDict([
+        (0x0, ('ignored',null_de(), None)),
+        (0x1, ('groupid',int_de(), None)),
+        (0x2, ('group_name',string_de(), None)),
+        (0x3, ('creation_time',date_de(), None)),
+        (0x4, ('lastmod_time',date_de(), None)),
+        (0x5, ('lastacc_time',date_de(), None)),
+        (0x6, ('expire_time',date_de(), None)),
+        (0x7, ('imageid',int_de(), None)),
+        (0x8, ('level',short_de(), None)),
+        (0x9, ('flags',int_de(), None)),
+        (0xFFFF, (None, None, None)),
+        ])
 
     def __init__(self,string=None):
         super(GroupInfo,self).__init__(GroupInfo.format,string)
@@ -206,24 +251,24 @@ Notes:
   * FFFF: Entry terminator, FIELDSIZE must be 0
   '''
 
-    format = {
-        0x0: ('ignored',null_de()),
-        0x1: ('uuid',ascii_de()),
-        0x2: ('groupid',int_de()),
-        0x3: ('imageid',int_de()),
-        0x4: ('title',string_de()),
-        0x5: ('url',string_de()),
-        0x6: ('username',string_de()),
-        0x7: ('password',string_de()),
-        0x8: ('notes',string_de()),
-        0x9: ('creation_time',date_de()),
-        0xa: ('last_mod_time',date_de()),
-        0xb: ('last_acc_time',date_de()),
-        0xc: ('expiration_time',date_de()),
-        0xd: ('binary_desc',string_de()),
-        0xe: ('binary_data',shunt_de()),
-        0xFFFF: (None,None),
-        }
+    format = OrderedDict([
+        (0x0, ('ignored',null_de(), lambda: None)),
+        (0x1, ('uuid',ascii_de(), lambda: uuid.uuid4().hex)),
+        (0x2, ('groupid',int_de(), lambda: 0)),
+        (0x3, ('imageid',int_de(), lambda: 0)),
+        (0x4, ('title',string_de(), lambda: "Unknown")),
+        (0x5, ('url',string_de(), lambda: "")),
+        (0x6, ('username',string_de(), lambda: "")),
+        (0x7, ('password',string_de(), lambda: "")),
+        (0x8, ('notes',string_de(), lambda: "")),
+        (0x9, ('creation_time',date_de(), datetime.now)),
+        (0xa, ('last_mod_time',date_de(), datetime.now)),
+        (0xb, ('last_acc_time',date_de(), datetime.now)),
+        (0xc, ('expiration_time',date_de(), lambda: datetime(2999, 12, 28, 0, 0))),
+        (0xd, ('binary_desc',string_de(), lambda: "")),
+        (0xe, ('binary_data',shunt_de(), lambda: "")),
+        (0xFFFF, (None,None, None)),
+    ])
 
     def __init__(self,string=None):
         super(EntryInfo,self).__init__(EntryInfo.format,string)
