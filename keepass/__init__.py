@@ -5,6 +5,8 @@ KeePass module
 
 import os.path
 
+from .kpdb import Database
+
 def get_entry(dbfilename, title, keyfilename=None, passphrase=None):
 
     dbname = os.path.basename(dbfilename).split(".")[0]
@@ -15,7 +17,7 @@ def get_entry(dbfilename, title, keyfilename=None, passphrase=None):
     filekey = infile.read().strip().decode('hex')
     infile.close()
 
-    db = Database(filename, filekey=filekey, passphrase=passphrase)
+    db = Database(dbfilename, filekey=filekey, passphrase=passphrase)
     entry = db.get(title)
 
     return entry
