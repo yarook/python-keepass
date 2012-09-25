@@ -17,7 +17,7 @@ import sys, struct, hashlib
 from header import DBHDR
 from infoblock import GroupInfo, EntryInfo
 from Crypto.Cipher import AES
-
+from random import randrange
 
 class Database(object):
     '''
@@ -315,7 +315,11 @@ class Database(object):
 
     def gen_groupid(self):
         "Generate 4 bytes of randomness suitable for a group's unique group id"
-        return 4                # only call once
+        groupid = randrange(1, 2**32-1)
+        if groupid in [g.groupid for g in self.groups]:
+            return self.gen_groupid()
+        else:
+            return groupid                # only call once
 
     def add_entry(self,path,title,username,password,url="",notes="",imageid=1,append=True):
         '''
