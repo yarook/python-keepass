@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 '''
 Classes and functions for the GroupInfo and EntryInfo blocks of a keepass file
 '''
@@ -7,58 +5,17 @@ Classes and functions for the GroupInfo and EntryInfo blocks of a keepass file
 import struct, uuid
 from collections import OrderedDict
 from datetime import datetime
+from random import randrange
 
-# return tupleof (decode,encode) functions
+from coder import *
 
-def null_de(): return (lambda buf:None, lambda val:None)
-def shunt_de(): return (lambda buf:buf, lambda val:val)
-
-def ascii_de():
-    from binascii import b2a_hex, a2b_hex
-    return (lambda buf:b2a_hex(buf).replace('\0',''), 
-            lambda val:a2b_hex(val)+'\0')
-
-def string_de():
-    return (lambda buf: buf.replace('\0',''), lambda val: val+'\0')
-
-def short_de():
-    return (lambda buf:struct.unpack("<H", buf)[0],
-            lambda val:struct.pack("<H", val))
-
-def int_de():
-    return (lambda buf:struct.unpack("<I", buf)[0],
-            lambda val:struct.pack("<I", val))
-
-def date_de():
-    from datetime import datetime
-    def decode(buf):
-        b = struct.unpack('<5B', buf)
-        year = (b[0] << 6) | (b[1] >> 2);
-        mon  = ((b[1] & 0b11)     << 2) | (b[2] >> 6);
-        day  = ((b[2] & 0b111111) >> 1);
-        hour = ((b[2] & 0b1)      << 4) | (b[3] >> 4);
-        min  = ((b[3] & 0b1111)   << 2) | (b[4] >> 6);
-        sec  = ((b[4] & 0b111111));
-        #print 'dateify:',b,buf,year, mon, day, hour, min, sec
-        return datetime(year, mon, day, hour, min, sec)
-
-    def encode(val):
-        year, mon, day, hour, min, sec = val.timetuple()[:6]
-        b0 = 0x0000FFFF & ( (year>>6)&0x0000003F )
-        b1 = 0x0000FFFF & ( ((year&0x0000003f)<<2) | ((mon>>2) & 0x00000003) )
-        b2 = 0x0000FFFF & ( (( mon&0x00000003)<<6) | ((day&0x0000001F)<<1) \
-                                | ((hour>>4)&0x00000001) )
-        b3 = 0x0000FFFF & ( ((hour&0x0000000F)<<4) | ((min>>2)&0x0000000F) )
-        b4 = 0x0000FFFF & ( (( min&0x00000003)<<6) | (sec&0x0000003F))
-        return struct.pack('<5B',b0,b1,b2,b3,b4)
-    return (decode,encode)
 
 class InfoBase(object):
     'Base class for info type blocks'
 
-    def __init__(self,format,string=None):
+    def __init__(self, format, string=None):
         self.format = format
-        self.order = []         # keep field order
+        self.order = []
         if string:
             self.decode(string)
         else:
@@ -73,39 +30,8 @@ class InfoBase(object):
                 value = self.__dict__[form[0]]
             except KeyError:
                 continue
-            ret.append('\t%s %s'%(form[0],value))
+            ret.append('\t%s %s'%(form[0], value))
         return '\n'.join(ret)
-
-    def decode(self,string):
-        'Fill self from binary string'
-        index = 0
-        while True:
-            substr = string[index:index+6]
-            index += 6
-            typ,siz = struct.unpack('<H I',substr)
-            self.order.append((typ,siz))
-
-            substr = string[index:index+siz]
-            index += siz
-            name,decenc,default = self.format[typ]
-            #print typ, siz, name
-            buf = struct.unpack('<%ds'%siz,substr)[0]
-
-            if name is None: break
-            try:
-                value = decenc[0](buf)
-            except struct.error,msg:
-                msg = '%s, typ = %d[%d] -> %s buf = "%s"'%\
-                    (msg,typ,siz,self.format[typ],buf)
-                raise struct.error,msg
-
-            #print value
-
-            #print '%s: type = %d[%d] -> %s buf = "%s" value = %s'%\
-            #    (name,typ,siz,self.format[typ],buf,str(value))
-            self.__dict__[name] = value
-            continue
-        return
 
     def __len__(self):
         length = 0
@@ -113,13 +39,43 @@ class InfoBase(object):
             length += 2+4+siz
         return length
 
+    def decode(self, string):
+        'Fill self from binary string'
+        index = 0
+        while True:
+            substr = string[index:index+6]
+            index += 6
+
+            typ, siz = struct.unpack('<H I', substr)
+            self.order.append((typ, siz))
+
+            substr = string[index:index+siz]
+            index += siz
+
+            name, coder, default = self.format[typ]
+            buf = struct.unpack('<%ds'%siz, substr)[0]
+
+            if name is None: break
+
+            try:
+                value = coder.decode(buf)
+            except struct.error,msg:
+                msg = '%s, typ = %d[%d] -> %s buf = "%s"'%\
+                    (msg,typ,siz,self.format[typ], buf)
+                raise struct.error, msg
+
+            self.__dict__[name] = value
+            continue
+        return
+
     def encode(self, set_default=False):
         string = ""
         for typ, item in self.format.items():
             name = item[0]
-            decenc = item[1]
+            coder = item[1]
             default = item[2]
-            if typ == 0xFFFF:   # end of block
+
+            if typ == 0xFFFF:
                 encoded = None
             else:
                 if hasattr(self, name):
@@ -129,41 +85,22 @@ class InfoBase(object):
                         value = None
                     else:
                         value = default()
-                encoded = decenc[1](value)
+                encoded = coder.encode(value)
+            
             if encoded is None:
                 siz = 0
             else:
                 siz = len(encoded)
-            #print typ, siz, repr(encoded)
-            if siz > 200000:
-                #print siz
-                raise Exception("Size too big")
-            buf = struct.pack('<H I',typ, siz)
-            typ,siz = struct.unpack('<H I',buf)
-            #print typ, siz
-            #buf += struct.pack('<I',siz)
-            if encoded is not None:
-                buf += struct.pack('<%ds'%siz,encoded)
-            string += buf
-            continue
-        #print
-        return string
 
-    def old_encode(self):
-        'Return binary string representatoin'
-        string = ""
-        for typ,siz in self.order:
-            if typ == 0xFFFF:   # end of block
-                encoded = None
-            else:
-                name,decenc = self.format[typ]
-                value = self.__dict__[name]
-                encoded = decenc[1](value)
-                pass
-            buf = struct.pack('<H',typ)
-            buf += struct.pack('<I',siz)
+            if siz > 200000:
+                raise Exception("Size too big")
+
+            buf = struct.pack('<H I', typ, siz)
+            typ, siz = struct.unpack('<H I', buf)
+
             if encoded is not None:
-                buf += struct.pack('<%ds'%siz,encoded)
+                buf += struct.pack('<%ds'%siz, encoded)
+
             string += buf
             continue
         return string
@@ -198,21 +135,21 @@ Notes:
   '''
 
     format = OrderedDict([
-        (0x0, ('ignored',null_de(), None)),
-        (0x1, ('groupid',int_de(), None)),
-        (0x2, ('group_name',string_de(), None)),
-        (0x3, ('creation_time',date_de(), None)),
-        (0x4, ('lastmod_time',date_de(), None)),
-        (0x5, ('lastacc_time',date_de(), None)),
-        (0x6, ('expire_time',date_de(), None)),
-        (0x7, ('imageid',int_de(), None)),
-        (0x8, ('level',short_de(), None)),
-        (0x9, ('flags',int_de(), None)),
+        (0x0, ('ignored', NullCoder(), None)),
+        (0x1, ('groupid', IntCoder(), lambda: randrange(1, 2**(4*8)-1))),
+        (0x2, ('group_name', StringCoder(), lambda: "Unknown")),
+        (0x3, ('creation_time', DatetimeCoder(), datetime.now)),
+        (0x4, ('lastmod_time', DatetimeCoder(), datetime.now)),
+        (0x5, ('lastacc_time', DatetimeCoder(), datetime.now)),
+        (0x6, ('expire_time', DatetimeCoder(), lambda: datetime(2999, 12, 28, 23, 59))),
+        (0x7, ('imageid', IntCoder(), lambda: 0)),
+        (0x8, ('level', ShortCoder(), lambda: 0)),
+        (0x9, ('flags', IntCoder(), lambda: 0)),
         (0xFFFF, (None, None, None)),
         ])
 
     def __init__(self,string=None):
-        super(GroupInfo,self).__init__(GroupInfo.format,string)
+        super(GroupInfo, self).__init__(GroupInfo.format, string)
         return
 
     def name(self):
@@ -220,6 +157,7 @@ Notes:
         return self.group_name
 
     pass
+
 
 class EntryInfo(InfoBase):
     '''One entry: [FIELDTYPE(FT)][FIELDSIZE(FS)][FIELDDATA(FD)]
@@ -252,26 +190,26 @@ Notes:
   '''
 
     format = OrderedDict([
-        (0x0, ('ignored',null_de(), lambda: None)),
-        (0x1, ('uuid',ascii_de(), lambda: uuid.uuid4().hex)),
-        (0x2, ('groupid',int_de(), lambda: 0)),
-        (0x3, ('imageid',int_de(), lambda: 0)),
-        (0x4, ('title',string_de(), lambda: "Unknown")),
-        (0x5, ('url',string_de(), lambda: "")),
-        (0x6, ('username',string_de(), lambda: "")),
-        (0x7, ('password',string_de(), lambda: "")),
-        (0x8, ('notes',string_de(), lambda: "")),
-        (0x9, ('creation_time',date_de(), datetime.now)),
-        (0xa, ('last_mod_time',date_de(), datetime.now)),
-        (0xb, ('last_acc_time',date_de(), datetime.now)),
-        (0xc, ('expiration_time',date_de(), lambda: datetime(2999, 12, 28, 0, 0))),
-        (0xd, ('binary_desc',string_de(), lambda: "")),
-        (0xe, ('binary_data',shunt_de(), lambda: "")),
-        (0xFFFF, (None,None, None)),
+        (0x0, ('ignored', NullCoder(), lambda: None)),
+        (0x1, ('uuid', AsciiCoder(), lambda: uuid.uuid4().hex)),
+        (0x2, ('groupid', IntCoder(), lambda: 0)),
+        (0x3, ('imageid', IntCoder(), lambda: 0)),
+        (0x4, ('title', StringCoder(), lambda: "Unknown")),
+        (0x5, ('url', StringCoder(), lambda: "")),
+        (0x6, ('username', StringCoder(), lambda: "")),
+        (0x7, ('password', StringCoder(), lambda: "")),
+        (0x8, ('notes', StringCoder(), lambda: "")),
+        (0x9, ('creation_time', DatetimeCoder(), datetime.now)),
+        (0xa, ('last_mod_time', DatetimeCoder(), datetime.now)),
+        (0xb, ('last_acc_time', DatetimeCoder(), datetime.now)),
+        (0xc, ('expiration_time', DatetimeCoder(), lambda: datetime(2999, 12, 28, 0, 0))),
+        (0xd, ('binary_desc', StringCoder(), lambda: "")),
+        (0xe, ('binary_data', ShuntCoder(), lambda: "")),
+        (0xFFFF, (None, None, None)),
     ])
 
     def __init__(self,string=None):
-        super(EntryInfo,self).__init__(EntryInfo.format,string)
+        super(EntryInfo, self).__init__(EntryInfo.format, string)
         return
 
     def name(self):
